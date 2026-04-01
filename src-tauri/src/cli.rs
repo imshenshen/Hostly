@@ -135,13 +135,14 @@ pub fn run_cli(app: Option<&AppHandle>) -> bool {
 
     match cli.command {
         Some(Commands::List) => {
-            match storage::list_profiles_internal(&ctx) {
-                Ok(profiles) => {
-                    for p in profiles {
-                        println!("{} [{}]", p.name, if p.active { "ACTIVE" } else { "OFF" });
+            match storage::list_folders_internal(&ctx) {
+                Ok(folders) => {
+                    match serde_json::to_string_pretty(&serde_json::json!({ "folders": folders })) {
+                        Ok(json) => println!("{}", json),
+                        Err(e) => eprintln!("Error serializing profiles: {}", e),
                     }
                 }
-                Err(e) => eprintln!("Error listing profiles: {}", e),
+                Err(e) => eprintln!("Error listing folders: {}", e),
             }
         },
         Some(Commands::Single) => {
@@ -175,12 +176,6 @@ pub fn run_cli(app: Option<&AppHandle>) -> bool {
             }
 
             // Check mode
-            let config = storage::load_config_internal(&ctx).unwrap_or_default();
-            if !config.multi_select && names.len() > 1 {
-                eprintln!("Warning: Single select mode is active. Only the first profile '{}' will be activated.", names[0]);
-                eprintln!("Use --multi to enable multi-select mode automatically.");
-            }
-
             for name in names {
                 if let Ok(Some(id)) = storage::find_profile_id_by_name_internal(&ctx, &name) {
                     let current_profiles = storage::list_profiles_internal(&ctx).unwrap_or_default();
@@ -268,6 +263,7 @@ pub fn run_cli(app: Option<&AppHandle>) -> bool {
                      match storage::create_profile_internal(
                          &ctx,
                          n.clone(),
+                         None,
                          None,
                          Some(target.clone()),
                          Some(3600) // Default 1 hour interval

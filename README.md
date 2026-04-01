@@ -1,5 +1,13 @@
 # Hostly
 
+## Why fork
+https://github.com/zengyufei/Hostly/issues/3#issuecomment-3753877731
+ 
+addition features:
+* Search (CMD+F, CMD+Shift+F)
+* Folder grouping
+* `list` command returns JSON format
+
 **Language**: English | [中文简体](./README_zh.md)
 
 ### Hostly (Minimalist Hosts Switcher)
@@ -45,15 +53,15 @@ An **ultra-lightweight**, high-performance Hosts management tool built on **Taur
 
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/zengyufei/hostly/main/img/common.png" alt="Hostly Main Interface" width="600" />
+  <img src="https://raw.githubusercontent.com/imshenshen/hostly/main/img/common.png" alt="Hostly Main Interface" width="600" />
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/zengyufei/hostly/main/img/multi.png" alt="Hostly Main Interface" width="600" />
+  <img src="https://raw.githubusercontent.com/imshenshen/hostly/main/img/multi.png" alt="Hostly Main Interface" width="600" />
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/zengyufei/hostly/main/img/window.png" alt="Hostly Main Interface" width="600" />
+  <img src="https://raw.githubusercontent.com/imshenshen/hostly/main/img/window.png" alt="Hostly Main Interface" width="600" />
 </p>
 
 

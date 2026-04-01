@@ -4,11 +4,28 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
+const DEFAULT_FOLDER_ID: &str = "default";
+const DEFAULT_FOLDER_NAME: &str = "默认文件夹";
+
+fn default_folder_id() -> String {
+    DEFAULT_FOLDER_ID.to_string()
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FolderMetadata {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub multi_select: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProfileMetadata {
     pub id: String,
     pub name: String,
     pub active: bool,
+    #[serde(default = "default_folder_id")]
+    pub folder_id: String,
     /// Remote URL for downloading hosts (if applicable)
     pub url: Option<String>,
     /// Last successful update timestamp (ISO 8601)
@@ -18,6 +35,7 @@ pub struct ProfileMetadata {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
 pub struct AppConfig {
     pub multi_select: bool,
     pub theme: Option<String>,
@@ -25,6 +43,7 @@ pub struct AppConfig {
     pub window_width: Option<f64>,
     pub window_height: Option<f64>,
     pub sidebar_width: Option<f64>,
+    pub folders: Vec<FolderMetadata>,
     pub profiles: Vec<ProfileMetadata>,
     pub active_profile_ids: Vec<String>, // Deprecated in favor of internal active flag? Or keep synced? 
                                          // Let's keep synced or just use 'active' field in ProfileMetadata for simplicity.
@@ -39,6 +58,18 @@ pub struct ProfileData {
     pub name: String,
     pub content: String,
     pub active: bool,
+    pub folder_id: String,
+    pub url: Option<String>,
+    pub last_update: Option<String>,
+    pub update_interval: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FolderData {
+    pub id: String,
+    pub name: String,
+    pub multi_select: bool,
+    pub profiles: Vec<ProfileData>,
 }
 
 pub enum Context<'a> {
@@ -92,6 +123,55 @@ fn get_common_path(ctx: &Context) -> Result<PathBuf, String> {
     Ok(ctx.get_app_dir()?.join("common.txt"))
 }
 
+fn ensure_default_folder(config: &mut AppConfig) -> bool {
+    let mut changed = false;
+
+    if !config.folders.iter().any(|f| f.id == DEFAULT_FOLDER_ID) {
+        config.folders.insert(0, FolderMetadata {
+            id: DEFAULT_FOLDER_ID.to_string(),
+            name: DEFAULT_FOLDER_NAME.to_string(),
+            multi_select: config.multi_select,
+        });
+        changed = true;
+    }
+
+    let folder_ids: std::collections::HashSet<String> =
+        config.folders.iter().map(|f| f.id.clone()).collect();
+    for profile in &mut config.profiles {
+        if profile.folder_id.is_empty() || !folder_ids.contains(&profile.folder_id) {
+            profile.folder_id = DEFAULT_FOLDER_ID.to_string();
+            changed = true;
+        }
+    }
+
+    changed
+}
+
+fn get_folder_multi_select(config: &AppConfig, folder_id: &str) -> bool {
+    config
+        .folders
+        .iter()
+        .find(|f| f.id == folder_id)
+        .map(|f| f.multi_select)
+        .unwrap_or(false)
+}
+
+fn get_or_create_folder_by_name_internal(ctx: &Context, name: &str) -> Result<String, String> {
+    let mut config = load_config_internal(ctx)?;
+    if let Some(folder) = config.folders.iter().find(|f| f.name == name) {
+        return Ok(folder.id.clone());
+    }
+
+    let id = Uuid::new_v4().to_string();
+    config.folders.push(FolderMetadata {
+        id: id.clone(),
+        name: name.to_string(),
+        multi_select: false,
+    });
+    save_config_internal(ctx, &config)?;
+    Ok(id)
+}
+
 #[tauri::command]
 pub fn load_config(app: AppHandle) -> Result<AppConfig, String> {
     load_config_internal(&Context::Tauri(&app))
@@ -103,6 +183,11 @@ pub fn load_config_internal(ctx: &Context) -> Result<AppConfig, String> {
         // First Run: Create defaults
         let mut config = AppConfig::default();
         config.multi_select = false;
+        config.folders.push(FolderMetadata {
+            id: DEFAULT_FOLDER_ID.to_string(),
+            name: DEFAULT_FOLDER_NAME.to_string(),
+            multi_select: false,
+        });
         
         let defaults = vec!["Dev", "Test", "Prod"];
         
@@ -116,6 +201,7 @@ pub fn load_config_internal(ctx: &Context) -> Result<AppConfig, String> {
             id: sys_id,
             name: "系统hosts备份".to_string(),
             active: false,
+            folder_id: DEFAULT_FOLDER_ID.to_string(),
             url: None,
             last_update: None,
             update_interval: None,
@@ -129,6 +215,7 @@ pub fn load_config_internal(ctx: &Context) -> Result<AppConfig, String> {
                  id,
                  name: name.to_string(),
                  active: false,
+                 folder_id: DEFAULT_FOLDER_ID.to_string(),
                  url: None,
                  last_update: None,
                  update_interval: None,
@@ -140,7 +227,11 @@ pub fn load_config_internal(ctx: &Context) -> Result<AppConfig, String> {
     }
     
     let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&content).map_err(|e| e.to_string())
+    let mut config: AppConfig = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    if ensure_default_folder(&mut config) {
+        save_config_internal(ctx, &config)?;
+    }
+    Ok(config)
 }
 
 pub fn save_config_internal(ctx: &Context, config: &AppConfig) -> Result<(), String> {
@@ -150,7 +241,9 @@ pub fn save_config_internal(ctx: &Context, config: &AppConfig) -> Result<(), Str
              fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
     }
-    let content = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
+    let mut normalized = config.clone();
+    ensure_default_folder(&mut normalized);
+    let content = serde_json::to_string_pretty(&normalized).map_err(|e| e.to_string())?;
     fs::write(path, content).map_err(|e| e.to_string())
 }
 
@@ -243,26 +336,55 @@ pub fn list_profiles_internal(ctx: &Context) -> Result<Vec<ProfileData>, String>
             name: meta.name,
             content,
             active: meta.active,
+            folder_id: meta.folder_id,
+            url: meta.url,
+            last_update: meta.last_update,
+            update_interval: meta.update_interval,
         });
     }
     
     Ok(profiles)
 }
 
+pub fn list_folders_internal(ctx: &Context) -> Result<Vec<FolderData>, String> {
+    let config = load_config_internal(ctx)?;
+    let profiles = list_profiles_internal(ctx)?;
+    let mut folders = Vec::new();
+
+    for folder in config.folders {
+        let folder_profiles = profiles
+            .iter()
+            .filter(|p| p.folder_id == folder.id)
+            .cloned()
+            .collect();
+
+        folders.push(FolderData {
+            id: folder.id,
+            name: folder.name,
+            multi_select: folder.multi_select,
+            profiles: folder_profiles,
+        });
+    }
+
+    Ok(folders)
+}
+
 #[tauri::command]
 pub fn create_profile(
     app: AppHandle,
     name: String,
+    folder_id: Option<String>,
     content: Option<String>,
     url: Option<String>,
     update_interval: Option<u64>
 ) -> Result<String, String> {
-    create_profile_internal(&Context::Tauri(&app), name, content, url, update_interval)
+    create_profile_internal(&Context::Tauri(&app), name, folder_id, content, url, update_interval)
 }
 
 pub fn create_profile_internal(
     ctx: &Context,
     name: String,
+    folder_id: Option<String>,
     content: Option<String>,
     url: Option<String>,
     update_interval: Option<u64>
@@ -274,6 +396,10 @@ pub fn create_profile_internal(
         return Err("环境名称已存在 / Profile name already exists".to_string());
     }
 
+    let target_folder_id = folder_id.unwrap_or_else(default_folder_id);
+    if !config.folders.iter().any(|f| f.id == target_folder_id) {
+        return Err("Folder not found".to_string());
+    }
     let id = Uuid::new_v4().to_string();
     let initial_content = content.unwrap_or_default();
     save_profile_file_internal(ctx, &id, &initial_content)?;
@@ -282,6 +408,7 @@ pub fn create_profile_internal(
         id: id.clone(),
         name,
         active: false,
+        folder_id: target_folder_id,
         url,
         last_update: None,
         update_interval,
@@ -305,7 +432,127 @@ pub fn save_profile_content(app: AppHandle, id: String, content: String) -> Resu
 }
 
 pub fn save_profile_content_internal(ctx: &Context, id: &str, content: &str) -> Result<(), String> {
+    let config = load_config_internal(ctx)?;
+    if let Some(profile) = config.profiles.iter().find(|p| p.id == id) {
+        if profile.url.is_some() {
+            return Err("Remote profile is read-only".to_string());
+        }
+    } else {
+        return Err("Profile not found".to_string());
+    }
+
     save_profile_file_internal(ctx, id, content)
+}
+
+#[tauri::command]
+pub fn create_folder(app: AppHandle, name: String) -> Result<String, String> {
+    create_folder_internal(&Context::Tauri(&app), name)
+}
+
+pub fn create_folder_internal(ctx: &Context, name: String) -> Result<String, String> {
+    let mut config = load_config_internal(ctx)?;
+    if config.folders.iter().any(|f| f.name == name) {
+        return Err("文件夹名称已存在 / Folder name already exists".to_string());
+    }
+
+    let id = Uuid::new_v4().to_string();
+    config.folders.push(FolderMetadata {
+        id: id.clone(),
+        name,
+        multi_select: false,
+    });
+    save_config_internal(ctx, &config)?;
+    Ok(id)
+}
+
+#[tauri::command]
+pub fn rename_folder(app: AppHandle, id: String, new_name: String) -> Result<(), String> {
+    rename_folder_internal(&Context::Tauri(&app), &id, new_name)
+}
+
+pub fn rename_folder_internal(ctx: &Context, id: &str, new_name: String) -> Result<(), String> {
+    if id == DEFAULT_FOLDER_ID {
+        return Err("Default folder cannot be renamed".to_string());
+    }
+
+    let mut config = load_config_internal(ctx)?;
+    if config.folders.iter().any(|f| f.name == new_name && f.id != id) {
+        return Err("文件夹名称已存在 / Folder name already exists".to_string());
+    }
+
+    if let Some(folder) = config.folders.iter_mut().find(|f| f.id == id) {
+        folder.name = new_name;
+        save_config_internal(ctx, &config)?;
+        Ok(())
+    } else {
+        Err("Folder not found".to_string())
+    }
+}
+
+#[tauri::command]
+pub fn reorder_folders(app: AppHandle, ordered_ids: Vec<String>) -> Result<(), String> {
+    reorder_folders_internal(&Context::Tauri(&app), ordered_ids)
+}
+
+pub fn reorder_folders_internal(ctx: &Context, ordered_ids: Vec<String>) -> Result<(), String> {
+    let mut config = load_config_internal(ctx)?;
+    if ordered_ids.len() != config.folders.len() {
+        return Err("Folder count mismatch".to_string());
+    }
+
+    let existing_ids: std::collections::HashSet<String> =
+        config.folders.iter().map(|f| f.id.clone()).collect();
+    let requested_ids: std::collections::HashSet<String> = ordered_ids.iter().cloned().collect();
+    if existing_ids != requested_ids {
+        return Err("Folder ids mismatch".to_string());
+    }
+
+    let mut by_id = std::collections::HashMap::new();
+    for folder in config.folders.drain(..) {
+        by_id.insert(folder.id.clone(), folder);
+    }
+
+    let mut reordered = Vec::with_capacity(ordered_ids.len());
+    for id in ordered_ids {
+        if let Some(folder) = by_id.remove(&id) {
+            reordered.push(folder);
+        } else {
+            return Err("Folder not found".to_string());
+        }
+    }
+    config.folders = reordered;
+    save_config_internal(ctx, &config)
+}
+
+#[tauri::command]
+pub fn move_profile_to_folder(app: AppHandle, id: String, folder_id: String) -> Result<(), String> {
+    move_profile_to_folder_internal(&Context::Tauri(&app), &id, &folder_id)
+}
+
+pub fn move_profile_to_folder_internal(ctx: &Context, id: &str, folder_id: &str) -> Result<(), String> {
+    let mut config = load_config_internal(ctx)?;
+    if !config.folders.iter().any(|f| f.id == folder_id) {
+        return Err("Folder not found".to_string());
+    }
+
+    if let Some(profile) = config.profiles.iter_mut().find(|p| p.id == id) {
+        profile.folder_id = folder_id.to_string();
+    } else {
+        return Err("Profile not found".to_string());
+    }
+
+    if !get_folder_multi_select(&config, folder_id) {
+        let mut found = false;
+        for profile in config.profiles.iter_mut().filter(|p| p.folder_id == folder_id && p.active) {
+            if found {
+                profile.active = false;
+            } else {
+                found = true;
+            }
+        }
+    }
+
+    save_config_internal(ctx, &config)
 }
 
 #[tauri::command]
@@ -353,6 +600,35 @@ pub fn rename_profile_internal(ctx: &Context, id: &str, new_name: String) -> Res
 }
 
 #[tauri::command]
+pub fn set_folder_multi_select(app: AppHandle, folder_id: String, enable: bool) -> Result<(), String> {
+    set_folder_multi_select_internal(&Context::Tauri(&app), &folder_id, enable)?;
+    apply_config(app)
+}
+
+pub fn set_folder_multi_select_internal(ctx: &Context, folder_id: &str, enable: bool) -> Result<(), String> {
+    let mut config = load_config_internal(ctx)?;
+
+    if let Some(folder) = config.folders.iter_mut().find(|f| f.id == folder_id) {
+        folder.multi_select = enable;
+    } else {
+        return Err("Folder not found".to_string());
+    }
+
+    if !enable {
+        let mut found = false;
+        for profile in config.profiles.iter_mut().filter(|p| p.folder_id == folder_id && p.active) {
+            if found {
+                profile.active = false;
+            } else {
+                found = true;
+            }
+        }
+    }
+
+    save_config_internal(ctx, &config)
+}
+
+#[tauri::command]
 pub fn toggle_profile_active(app: AppHandle, id: String) -> Result<(), String> {
     toggle_profile_active_internal(&Context::Tauri(&app), &id)?;
     apply_config(app)
@@ -360,24 +636,25 @@ pub fn toggle_profile_active(app: AppHandle, id: String) -> Result<(), String> {
 
 pub fn toggle_profile_active_internal(ctx: &Context, id: &str) -> Result<(), String> {
     let mut config = load_config_internal(ctx)?;
-    
-    if config.multi_select {
-        // Toggle specific
+
+    let folder_id = config
+        .profiles
+        .iter()
+        .find(|p| p.id == id)
+        .map(|p| p.folder_id.clone())
+        .ok_or("Profile not found".to_string())?;
+
+    if get_folder_multi_select(&config, &folder_id) {
         if let Some(p) = config.profiles.iter_mut().find(|p| p.id == id) {
             p.active = !p.active;
         }
     } else {
-        // Single select logic
-        // If clicking active, toggle off? Or do nothing? Usually toggle off or keep on.
-        // Let's say toggle off if already on.
         let was_active = config.profiles.iter().find(|p| p.id == id).map(|p| p.active).unwrap_or(false);
-        
-        // Turn all off
-        for p in &mut config.profiles {
+
+        for p in config.profiles.iter_mut().filter(|p| p.folder_id == folder_id) {
             p.active = false;
         }
-        
-        // If it wasn't active, turn it on
+
         if !was_active {
             if let Some(p) = config.profiles.iter_mut().find(|p| p.id == id) {
                 p.active = true;
@@ -397,22 +674,8 @@ pub fn set_multi_select(app: AppHandle, enable: bool) -> Result<(), String> {
 pub fn set_multi_select_internal(ctx: &Context, enable: bool) -> Result<(), String> {
     let mut config = load_config_internal(ctx)?;
     config.multi_select = enable;
-    
-    // If disabling multi-select, and multiple are active, keep only first
-    if !enable {
-        let mut found = false;
-        for p in &mut config.profiles {
-            if p.active {
-                if found {
-                    p.active = false;
-                } else {
-                    found = true;
-                }
-            }
-        }
-    }
-    
-    save_config_internal(ctx, &config)
+    save_config_internal(ctx, &config)?;
+    set_folder_multi_select_internal(ctx, DEFAULT_FOLDER_ID, enable)
 }
 
 #[tauri::command]
@@ -537,12 +800,20 @@ pub fn upsert_profile(app: AppHandle, name: String, content: String) -> Result<S
 }
 
 pub fn upsert_profile_internal(ctx: &Context, name: String, content: String) -> Result<String, String> {
+    upsert_profile_in_folder_internal(ctx, name, content, None)
+}
+
+pub fn upsert_profile_in_folder_internal(
+    ctx: &Context,
+    name: String,
+    content: String,
+    folder_id: Option<String>,
+) -> Result<String, String> {
     if let Some(id) = find_profile_id_by_name_internal(ctx, &name)? {
         save_profile_file_internal(ctx, &id, &content)?;
         Ok(id)
     } else {
-
-        create_profile_internal(ctx, name, Some(content), None, None)
+        create_profile_internal(ctx, name, folder_id, Some(content), None, None)
     }
 }
 
@@ -577,7 +848,7 @@ pub fn import_switchhosts_internal(ctx: &Context, json_content: String) -> Resul
         // Traverse tree
         if let Some(tree) = data.get("list").and_then(|l| l.get("tree")).and_then(|t| t.as_array()) {
             let mut count = 0;
-            parse_switchhosts_v4_tree_internal(ctx, tree, &content_map, &mut count)?;
+            parse_switchhosts_v4_tree_internal(ctx, tree, &content_map, None, &mut count)?;
             return Ok(count);
         }
     }
@@ -592,7 +863,7 @@ pub fn import_switchhosts_internal(ctx: &Context, json_content: String) -> Resul
     };
 
     let mut count = 0;
-    parse_switchhosts_items_internal(ctx, list, &mut count)?;
+    parse_switchhosts_items_internal(ctx, list, None, &mut count)?;
 
     Ok(count)
 }
@@ -601,6 +872,7 @@ fn parse_switchhosts_v4_tree_internal(
     ctx: &Context, 
     items: &Vec<serde_json::Value>, 
     content_map: &std::collections::HashMap<&str, &str>, 
+    root_folder_id: Option<String>,
     count: &mut usize
 ) -> Result<(), String> {
     for item in items {
@@ -609,20 +881,30 @@ fn parse_switchhosts_v4_tree_internal(
         let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
 
         if item_type == "folder" {
+            let next_root_folder_id = if let Some(existing_root) = &root_folder_id {
+                existing_root.clone()
+            } else {
+                get_or_create_folder_by_name_internal(ctx, title)?
+            };
             if let Some(children) = item.get("children").and_then(|c| c.as_array()) {
-                parse_switchhosts_v4_tree_internal(ctx, children, content_map, count)?;
+                parse_switchhosts_v4_tree_internal(ctx, children, content_map, Some(next_root_folder_id), count)?;
             }
         } else {
             // Find content in map or item itself
             let content = content_map.get(id).map(|c| *c).or_else(|| item.get("content").and_then(|v| v.as_str())).unwrap_or("");
-            upsert_profile_internal(ctx, title.to_string(), content.to_string())?;
+            upsert_profile_in_folder_internal(ctx, title.to_string(), content.to_string(), root_folder_id.clone())?;
             *count += 1;
         }
     }
     Ok(())
 }
 
-fn parse_switchhosts_items_internal(ctx: &Context, items: &Vec<serde_json::Value>, count: &mut usize) -> Result<(), String> {
+fn parse_switchhosts_items_internal(
+    ctx: &Context,
+    items: &Vec<serde_json::Value>,
+    root_folder_id: Option<String>,
+    count: &mut usize,
+) -> Result<(), String> {
     for item in items {
         let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("Unknown");
         let folder = item.get("folder").and_then(|v| v.as_bool())
@@ -630,12 +912,17 @@ fn parse_switchhosts_items_internal(ctx: &Context, items: &Vec<serde_json::Value
             .unwrap_or(false);
         
         if folder {
+            let next_root_folder_id = if let Some(existing_root) = &root_folder_id {
+                existing_root.clone()
+            } else {
+                get_or_create_folder_by_name_internal(ctx, title)?
+            };
             if let Some(children) = item.get("children").and_then(|c| c.as_array()) {
-                parse_switchhosts_items_internal(ctx, children, count)?;
+                parse_switchhosts_items_internal(ctx, children, Some(next_root_folder_id), count)?;
             }
         } else {
             let content = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            upsert_profile_internal(ctx, title.to_string(), content.to_string())?;
+            upsert_profile_in_folder_internal(ctx, title.to_string(), content.to_string(), root_folder_id.clone())?;
             *count += 1;
         }
     }
@@ -787,4 +1074,3 @@ fn download_single_url(url: &str) -> Result<String, String> {
         Err(format!("HTTP Error {} from {}", response.status_code, url))
     }
 }
-

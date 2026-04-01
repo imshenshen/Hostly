@@ -53,19 +53,17 @@
                 
                 <div class="sidebar-section">
                     <div class="section-header">
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <div class="header-title">环境配置</div>
-                            <div class="mode-switch compact">
-                                <span class="mode-label" style="font-size: 10px;">单</span>
-                                <label class="switch scale-sm">
-                                    <input type="checkbox" id="multi-select-toggle">
-                                    <span class="slider round"></span>
-                                </label>
-                                <span class="mode-label" style="font-size: 10px;">多</span>
-                            </div>
+                        <div class="header-title">环境配置</div>
+                        <div style="display: flex; gap: 6px;">
+                            <button id="add-folder-btn" class="icon-btn-small" title="新建文件夹">📁</button>
+                            <button id="add-profile-btn" class="icon-btn-small" title="新建环境">+</button>
                         </div>
-                        <button id="add-profile-btn" class="icon-btn-small" title="新建环境">+</button>
                     </div>
+                    <div class="search-toolbar">
+                        <input id="host-search-input" type="text" class="search-input" placeholder="搜索所有 host..." />
+                        <button id="clear-search-btn" class="icon-btn-small hidden" title="清空搜索">×</button>
+                    </div>
+                    <div id="host-search-results" class="search-results hidden"></div>
                     <ul id="profile-list" class="profile-ul">
                         <!-- 动态渲染 -->
                     </ul>
@@ -99,6 +97,13 @@
                    <span id="current-profile-id" class="hidden"></span>
                 </div>
                 <div class="header-right">
+                    <div id="editor-find-bar" class="editor-find-bar hidden">
+                        <input id="editor-find-input" type="text" placeholder="搜索当前配置..." />
+                        <span id="editor-find-count" class="editor-find-count">0/0</span>
+                        <button id="editor-find-prev" class="icon-btn-small" title="上一个">↑</button>
+                        <button id="editor-find-next" class="icon-btn-small" title="下一个">↓</button>
+                        <button id="editor-find-close" class="icon-btn-small" title="关闭">×</button>
+                    </div>
                     <button id="rename-btn" class="hidden">修改配置</button>
                     <button id="system-edit-btn" class="secondary hidden">编辑系统文件</button>
                     <button id="save-btn" class="primary hidden">保存</button>
@@ -122,6 +127,11 @@
             <div class="form-group">
                 <label>名称</label>
                 <input type="text" id="modal-input" placeholder="请输入环境名称">
+            </div>
+
+            <div class="form-group">
+                <label>所属文件夹</label>
+                <select id="modal-folder-select"></select>
             </div>
 
             <div class="form-group">
