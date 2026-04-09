@@ -1,0 +1,43 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "hostly-local",
+  "title": "Hostly Local",
+  "description": "Show Hostly profiles and quickly enable/disable hosts",
+  "icon": "icon.png",
+  "author": "local",
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "hostly-core",
+      "title": "Hostly Core",
+      "description": "Show host list and quickly enable/disable",
+      "icon": "icon.png",
+      "mode": "view",
+      "preferences": [
+        {
+          "name": "hostlyPath",
+          "type": "textfield",
+          "required": false,
+          "title": "Hostly Binary Path",
+          "description": "Optional override. Defaults to /Applications/Hostly.app/Contents/MacOS/hostly-core"
+        }
+      ]
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.79.1"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^1.0.8",
+    "@types/node": "22.13.10",
+    "@types/react": "19.0.10",
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.2",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "build": "ray build -e dist -o dist && node -e \"const fs=require('fs'); fs.copyFileSync('icon.png','dist/icon.png'); fs.copyFileSync('README.md','dist/README.md');\"",
+    "dev": "ray develop",
+    "lint": "ray lint"
+  }
+}

@@ -36,6 +36,43 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  publish-raycast:
+    needs: cleanup
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: install dependencies (raycast)
+        working-directory: raycast
+        run: npm install
+
+      - name: build raycast extension
+        working-directory: raycast
+        run: npx ray build -e dist -o dist
+
+      - name: package raycast extension
+        shell: bash
+        run: |
+          cp raycast/icon.png raycast/dist/icon.png
+          cp raycast/README.md raycast/dist/README.md
+          cd raycast/dist
+          zip -r ../../hostly-raycast-extension.zip .
+
+      - name: upload raycast package
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: releases
+          files: hostly-raycast-extension.zip
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fail_on_unmatched_files: true
+
   publish-tauri:
     needs: cleanup
     permissions:

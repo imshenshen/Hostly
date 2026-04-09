@@ -7,6 +7,7 @@ addition features:
 * Search (CMD+F, CMD+Shift+F)
 * Folder grouping
 * `list` command returns JSON format
+* support `Raycast` , [doc here](./raycast/README.md)
 
 **Language**: English | [中文简体](./README_zh.md)
 
