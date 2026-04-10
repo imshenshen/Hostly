@@ -65,6 +65,12 @@ async function toggleHost(profile: ProfileData) {
   await runHostly(args);
 }
 
+async function openHostlyApp() {
+  await execFileAsync("open", ["-a", "Hostly"], {
+    windowsHide: true,
+  });
+}
+
 export default function Command() {
   const [folders, setFolders] = useState<FolderData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -117,6 +123,19 @@ export default function Command() {
     [isMutating, load],
   );
 
+  const onOpenHostlyApp = useCallback(async () => {
+    try {
+      await openHostlyApp();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Failed to open Hostly",
+        message,
+      });
+    }
+  }, []);
+
   return (
     <List isLoading={isLoading || isMutating} searchBarPlaceholder="Search hosts...">
       {folders.map((folder) => (
@@ -141,6 +160,19 @@ export default function Command() {
           ))}
         </List.Section>
       ))}
+      <List.Section title="Hostly App">
+        <List.Item
+          key="open-hostly-app"
+          title="Open Hostly"
+          icon={Icon.AppWindow}
+          actions={
+            <ActionPanel>
+              <Action title="Open Hostly" icon={Icon.AppWindow} onAction={onOpenHostlyApp} />
+              <Action title="Refresh" icon={Icon.ArrowClockwise} onAction={load} shortcut={{ modifiers: ["cmd"], key: "r" }} />
+            </ActionPanel>
+          }
+        />
+      </List.Section>
     </List>
   );
 }
