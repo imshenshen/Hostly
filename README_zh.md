@@ -106,6 +106,15 @@ npm run tauri build
 > 举例使用 hostly-core-win-x64.exe import ycf --target http://localhost:8080/hosts.txt --open --multi
 > 更改为多选后导入 远程配置hots.txt 到ycf且生效，如果 ycf 不存在则创建
 
+### SwitchHosts 迁移测试流程
+
+可使用以下命令验证 SwitchHosts 导入兼容性（包含文件夹层级归并到顶层文件夹的行为）：
+
+```bash
+cd src-tauri
+cargo test import_switchhosts -- --nocapture
+```
+
 ## 🛠️ 常见问题
 
 **Q: 为什么生成的体积这么小？**  

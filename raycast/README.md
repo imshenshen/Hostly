@@ -2,6 +2,8 @@
 
 这是一个本地 Raycast 插件，用于调用 `hostly` 命令管理 Host 配置。
 
+![](./demo.png)
+
 ## 功能
 
 - 调用 `hostly list`，按文件夹展示 Host 列表

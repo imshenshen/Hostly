@@ -75,12 +75,14 @@ pub struct FolderData {
 pub enum Context<'a> {
     Tauri(&'a AppHandle),
     Headless,
+    HeadlessAt(PathBuf),
 }
 
 impl<'a> Context<'a> {
     pub fn get_app_dir(&self) -> Result<PathBuf, String> {
         match self {
             Context::Tauri(app) => app.path().app_data_dir().map_err(|e| e.to_string()),
+            Context::HeadlessAt(path) => Ok(path.clone()),
             Context::Headless => {
                 // Hardcoded fallback for headless CLI to match Tauri's app_data_dir for "com.hostly.app"
                 #[cfg(target_os = "windows")]
@@ -105,6 +107,23 @@ impl<'a> Context<'a> {
             }
         }
     }
+}
+
+fn is_switchhosts_folder_item(item: &serde_json::Value) -> bool {
+    let folder_flag = item.get("folder").and_then(|v| v.as_bool()).unwrap_or(false);
+    let type_folder = item.get("type").and_then(|v| v.as_str()) == Some("folder");
+    let folder_mode = item
+        .get("folder_mode")
+        .and_then(|v| v.as_i64())
+        .map(|v| v != 0)
+        .unwrap_or(false);
+    let has_children = item
+        .get("children")
+        .and_then(|c| c.as_array())
+        .map(|children| !children.is_empty())
+        .unwrap_or(false);
+
+    folder_flag || type_folder || folder_mode || has_children
 }
 
 fn get_profiles_dir(ctx: &Context) -> Result<PathBuf, String> {
@@ -907,9 +926,7 @@ fn parse_switchhosts_items_internal(
 ) -> Result<(), String> {
     for item in items {
         let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("Unknown");
-        let folder = item.get("folder").and_then(|v| v.as_bool())
-            .or_else(|| item.get("type").and_then(|v| Some(v.as_str() == Some("folder"))))
-            .unwrap_or(false);
+        let folder = is_switchhosts_folder_item(item);
         
         if folder {
             let next_root_folder_id = if let Some(existing_root) = &root_folder_id {
@@ -928,6 +945,130 @@ fn parse_switchhosts_items_internal(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn test_ctx() -> (tempfile::TempDir, Context<'static>) {
+        let dir = tempdir().expect("failed to create temp dir");
+        let app_dir = dir.path().join("com.hostly.switcher");
+        (dir, Context::HeadlessAt(app_dir))
+    }
+
+    #[test]
+    fn import_switchhosts_v3_folder_mode_keeps_top_folder() {
+        let (_guard, ctx) = test_ctx();
+        let json = r#"
+{
+  "version": [3, 5, 6, 5551],
+  "list": [
+    {
+      "id": "folder-root",
+      "title": "Root Folder",
+      "folder_mode": 1,
+      "children": [
+        {
+          "id": "folder-child",
+          "title": "Child Folder",
+          "folder_mode": 1,
+          "children": [
+            {
+              "id": "a",
+              "title": "A",
+              "content": "127.0.0.1 a.local"
+            }
+          ]
+        },
+        {
+          "id": "b",
+          "title": "B",
+          "content": "127.0.0.1 b.local"
+        }
+      ]
+    },
+    {
+      "id": "c",
+      "title": "C",
+      "content": "127.0.0.1 c.local"
+    }
+  ]
+}
+        "#;
+
+        let imported = import_switchhosts_internal(&ctx, json.to_string()).expect("import should succeed");
+        assert_eq!(imported, 3);
+
+        let folders = list_folders_internal(&ctx).expect("list folders should succeed");
+        let root = folders
+            .iter()
+            .find(|f| f.name == "Root Folder")
+            .expect("top-level folder should be created");
+
+        let root_names: std::collections::HashSet<String> =
+            root.profiles.iter().map(|p| p.name.clone()).collect();
+        assert!(root_names.contains("A"));
+        assert!(root_names.contains("B"));
+        assert_eq!(root_names.len(), 2);
+
+        let default = folders
+            .iter()
+            .find(|f| f.id == DEFAULT_FOLDER_ID)
+            .expect("default folder should exist");
+        assert!(default.profiles.iter().any(|p| p.name == "C"));
+    }
+
+    #[test]
+    fn import_switchhosts_v4_tree_keeps_top_folder() {
+        let (_guard, ctx) = test_ctx();
+        let json = r#"
+{
+  "data": {
+    "list": {
+      "tree": [
+        {
+          "id": "folder-root",
+          "type": "folder",
+          "title": "Top",
+          "children": [
+            {
+              "id": "folder-child",
+              "type": "folder",
+              "title": "Nested",
+              "children": [
+                { "id": "host-1", "type": "local", "title": "One" }
+              ]
+            },
+            { "id": "host-2", "type": "local", "title": "Two" }
+          ]
+        }
+      ]
+    },
+    "collection": {
+      "hosts": {
+        "data": [
+          { "id": "host-1", "content": "127.0.0.1 one.local" },
+          { "id": "host-2", "content": "127.0.0.1 two.local" }
+        ]
+      }
+    }
+  }
+}
+        "#;
+
+        let imported = import_switchhosts_internal(&ctx, json.to_string()).expect("import should succeed");
+        assert_eq!(imported, 2);
+
+        let folders = list_folders_internal(&ctx).expect("list folders should succeed");
+        let top = folders.iter().find(|f| f.name == "Top").expect("top folder should exist");
+        let top_names: std::collections::HashSet<String> =
+            top.profiles.iter().map(|p| p.name.clone()).collect();
+        assert!(top_names.contains("One"));
+        assert!(top_names.contains("Two"));
+        assert_eq!(top_names.len(), 2);
+    }
 }
 
 pub fn check_auto_updates(app: &AppHandle) {

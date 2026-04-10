@@ -106,6 +106,15 @@ You can use `hostly` or `hostly-core` to run the following commands:
 > Example: `hostly-core-win-x64.exe import ycf --target http://localhost:8080/hosts.txt --open --multi`
 > Switches to multi-select mode, imports the remote hosts.txt into "ycf" and activates it. Creates "ycf" if it doesn't exist.
 
+### SwitchHosts Migration Test Flow
+
+Run these tests to verify SwitchHosts import compatibility (including folder hierarchy flattening to top-level folders):
+
+```bash
+cd src-tauri
+cargo test import_switchhosts -- --nocapture
+```
+
 ## 🛠️ FAQ
 
 **Q: Why is the generated app so small?**
